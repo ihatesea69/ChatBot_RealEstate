@@ -43,5 +43,13 @@
   },
   "devDependencies": {
     "rimraf": "^5.0.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ihatesea69/ChatBot_RealEstate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ihatesea69/ChatBot_RealEstate/issues"
+  },
+  "homepage": "https://github.com/ihatesea69/ChatBot_RealEstate#readme"
 }

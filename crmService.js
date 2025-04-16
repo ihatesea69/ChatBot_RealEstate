@@ -2,26 +2,36 @@ const { google } = require('googleapis');
 const { authenticate } = require('@google-cloud/local-auth');
 const path = require('path');
 const fs = require('fs');
+const AWS = require('aws-sdk');
 
 class CRMService {
   constructor() {
     this.sheets = null;
     this.spreadsheetId = process.env.GOOGLE_SHEET_ID;
     this.initialized = false;
+    this.secretsManager = new AWS.SecretsManager({
+      region: process.env.AWS_REGION || 'us-east-1'
+    });
   }
 
   async initialize(auth) {
     try {
       if (!auth) {
-        console.log('No auth provided, trying to authenticate directly...');
-        // Xác thực trực tiếp nếu không có auth được truyền vào
-        auth = await authenticate({
-          keyfilePath: path.join(process.cwd(), 'credentials.json'),
-          scopes: [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive'
-          ],
-        });
+        console.log('No auth provided, attempting to authenticate...');
+        
+        // Ưu tiên sử dụng Secrets Manager nếu đang ở môi trường AWS
+        if (process.env.USE_AWS_SECRETS === 'true') {
+          auth = await this._getAuthFromSecretsManager();
+        } else {
+          // Xác thực trực tiếp nếu không sử dụng AWS Secrets Manager
+          auth = await authenticate({
+            keyfilePath: path.join(process.cwd(), 'credentials.json'),
+            scopes: [
+              'https://www.googleapis.com/auth/spreadsheets',
+              'https://www.googleapis.com/auth/drive'
+            ],
+          });
+        }
       }
       
       this.sheets = google.sheets({ version: 'v4', auth });
@@ -45,6 +55,39 @@ class CRMService {
         console.error('===========================');
       }
       throw error;
+    }
+  }
+
+  async _getAuthFromSecretsManager() {
+    try {
+      const secretName = process.env.GOOGLE_CREDENTIALS_SECRET_NAME || 'google/credentials';
+      const data = await this.secretsManager.getSecretValue({ SecretId: secretName }).promise();
+      
+      let credentials;
+      if (data.SecretString) {
+        credentials = JSON.parse(data.SecretString);
+      } else {
+        const buff = Buffer.from(data.SecretBinary, 'base64');
+        credentials = JSON.parse(buff.toString('ascii'));
+      }
+
+      // Thiết lập xác thực OAuth2 từ credentials lấy từ Secrets Manager
+      const { client_email, private_key, client_id } = credentials;
+      const auth = new google.auth.JWT(
+        client_email,
+        null,
+        private_key,
+        [
+          'https://www.googleapis.com/auth/spreadsheets',
+          'https://www.googleapis.com/auth/drive'
+        ]
+      );
+
+      console.log('Successfully retrieved Google credentials from AWS Secrets Manager');
+      return auth;
+    } catch (error) {
+      console.error('Error loading Google credentials from Secrets Manager:', error);
+      throw new Error(`Failed to get Google auth from AWS Secrets Manager: ${error.message}`);
     }
   }
   

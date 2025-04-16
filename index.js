@@ -529,7 +529,7 @@ exports.handler = async (event) => {
                     "I'm sorry, I had trouble understanding your voice message. Could you please send your message as text instead?"
                 );
             }
-        } else {
+          } else {
             // Xử lý các loại media khác nếu cần
             incomingMsgBody = incomingMsgBody || "[Media Message]";
         }
@@ -608,7 +608,7 @@ Remember to be helpful and welcoming to new clients.`;
       const twilioResponse = '<Response></Response>';
       return { statusCode: 200, headers: { 'Content-Type': 'text/xml' }, body: twilioResponse };
 
-  } catch (error) {
+      } catch (error) {
       console.error('Error processing message:', error);
       // Gửi thông báo lỗi cho người dùng
       try {

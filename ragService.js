@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const AWS = require('aws-sdk');
+const axios = require('axios');
 
 // Đường dẫn thư mục chứa tài liệu BĐS Dubai
 const DOCS_DIR = path.join(process.cwd(), 'dubai_real_estate_docs');
@@ -12,6 +14,11 @@ class SimpleRAGService {
   constructor() {
     this.initialized = false;
     this.documents = [];
+    this.useRemoteEmbedding = process.env.USE_REMOTE_EMBEDDING === 'true';
+    this.embeddingEndpoint = process.env.EMBEDDING_ENDPOINT;
+    this.secretsManager = new AWS.SecretsManager({
+      region: process.env.AWS_REGION || 'us-east-1'
+    });
   }
 
   /**
@@ -20,6 +27,11 @@ class SimpleRAGService {
   async initialize() {
     try {
       console.log('Initializing simple RAG service...');
+      
+      // Tải cấu hình từ AWS Secrets Manager nếu cần
+      if (process.env.USE_AWS_SECRETS === 'true') {
+        await this._loadConfigFromSecrets();
+      }
       
       // Tạo thư mục docs nếu chưa tồn tại
       if (!fs.existsSync(DOCS_DIR)) {
@@ -37,6 +49,41 @@ class SimpleRAGService {
     } catch (error) {
       console.error('Error initializing simple RAG service:', error);
       return false;
+    }
+  }
+
+  /**
+   * Tải cấu hình từ AWS Secrets Manager
+   * @private
+   */
+  async _loadConfigFromSecrets() {
+    try {
+      const secretName = process.env.RAG_SECRET_NAME || 'rag-service-config';
+      const data = await this.secretsManager.getSecretValue({ SecretId: secretName }).promise();
+      
+      let config;
+      if (data.SecretString) {
+        config = JSON.parse(data.SecretString);
+      } else {
+        const buff = Buffer.from(data.SecretBinary, 'base64');
+        config = JSON.parse(buff.toString('ascii'));
+      }
+
+      // Cập nhật cấu hình
+      if (config.embeddingEndpoint) {
+        this.embeddingEndpoint = config.embeddingEndpoint;
+        console.log(`Updated embedding endpoint to ${this.embeddingEndpoint}`);
+      }
+      
+      if (config.useRemoteEmbedding !== undefined) {
+        this.useRemoteEmbedding = config.useRemoteEmbedding;
+        console.log(`Remote embedding is ${this.useRemoteEmbedding ? 'enabled' : 'disabled'}`);
+      }
+
+      console.log('Successfully loaded RAG configuration from AWS Secrets Manager');
+    } catch (error) {
+      console.warn('Error loading RAG configuration from Secrets Manager:', error.message);
+      console.log('Using default or environment variable configuration');
     }
   }
   
@@ -191,6 +238,46 @@ If the information provided isn't sufficient to answer the query fully, you can 
     } catch (error) {
       console.error('Error generating RAG prompt:', error);
       return null;
+    }
+  }
+
+  /**
+   * Tạo embedding cho văn bản
+   * @param {string} text - Văn bản cần tạo embedding
+   * @returns {Promise<number[]>} - Vector embedding
+   */
+  async createEmbedding(text) {
+    try {
+      // Sử dụng dịch vụ embedding từ xa nếu được cấu hình
+      if (this.useRemoteEmbedding && this.embeddingEndpoint) {
+        return await this._createRemoteEmbedding(text);
+      }
+      
+      // Phương pháp đơn giản không sử dụng embedding thực sự (chỉ cho mục đích demo)
+      // Trong môi trường thực, bạn nên sử dụng một mô hình embedding thực sự
+      return this._createSimpleEmbedding(text);
+    } catch (error) {
+      console.error('Error creating embedding:', error);
+      // Fallback to simple embedding
+      return this._createSimpleEmbedding(text);
+    }
+  }
+
+  /**
+   * Tạo embedding bằng cách sử dụng dịch vụ từ xa
+   * @private
+   */
+  async _createRemoteEmbedding(text) {
+    try {
+      const response = await axios.post(this.embeddingEndpoint, {
+        text: text,
+        model: "embedding-model" // Tùy chỉnh tùy theo API
+      });
+      
+      return response.data.embedding;
+    } catch (error) {
+      console.error('Error calling remote embedding service:', error);
+      throw error;
     }
   }
 }
