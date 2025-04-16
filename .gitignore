@@ -1,0 +1,55 @@
+# Thư mục node_modules
+node_modules/
+
+# Tệp môi trường và thông tin nhạy cảm
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+credentials.json
+*.pem
+*.key
+
+# Thư mục cache và xác thực WhatsApp
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Tệp nhật ký
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Thư mục build và đầu ra
+/dist
+/build
+/out
+
+# Tệp tạm thời
+/temp
+temp/
+*.tmp
+
+# Các tệp hệ thống
+.DS_Store
+Thumbs.db
+
+# Tệp JSON tạm thời hoặc dữ liệu trò chuyện
+conversation_histories.json
+
+# Coverage directory
+coverage/
+
+# IDE và editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Các tệp tài liệu API được tạo tự động
+/docs
+
+# Tệp dependency lock
+package-lock.json 

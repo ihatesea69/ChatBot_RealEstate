@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Dubai Real Estate WhatsApp Assistant
+  Serverless infrastructure for AI WhatsApp chatbot with scheduling functionality
+
+# Thông tin ứng dụng
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: dubai-real-estate-whatsapp-assistant
+    Description: AI-powered WhatsApp assistant for Dubai real estate with scheduling functionality
+    Author: Your Company
+    SemanticVersion: 0.1.0
+    ReadmeUrl: README.md
+    LicenseUrl: LICENSE.txt
+    Labels: ['whatsapp', 'ai', 'chatbot', 'scheduling', 'real-estate']
+
+# Tham số có thể tùy chỉnh khi deploy
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment (dev, staging, prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  WhatsappProviderType:
+    Type: String
+    Default: twilio
+    Description: WhatsApp provider type
+    AllowedValues:
+      - twilio
+      - messagebird
+      - other
+
+  SystemPromptSecretName:
+    Type: String
+    Default: dubai-real-estate-system-prompt
+    Description: Name of the secret storing the system prompt
+
+  GoogleServiceAccountSecretName:
+    Type: String
+    Default: google-service-account-key
+    Description: Name of the secret storing the Google Service Account key
+
+  WhatsappProviderApiKeySecretName:
+    Type: String
+    Default: whatsapp-provider-api-key
+    Description: Name of the secret storing the WhatsApp provider API key
+
+# Global configuration cho Lambda functions
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs16.x
+    MemorySize: 512
+    Tracing: Active
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+        NODE_OPTIONS: '--enable-source-maps'
+        SYSTEM_PROMPT_SECRET_NAME: !Ref SystemPromptSecretName
+        GOOGLE_SERVICE_ACCOUNT_SECRET_NAME: !Ref GoogleServiceAccountSecretName
+        WHATSAPP_PROVIDER_API_KEY_SECRET_NAME: !Ref WhatsappProviderApiKeySecretName
+        CONVERSATION_HISTORY_TABLE_NAME: !Ref ConversationHistoryTable
+        USER_STATE_TABLE_NAME: !Ref UserStateTable
+        GOOGLE_CALENDAR_LAMBDA_NAME: !Sub "${AWS::StackName}-googleCalendarFunction-${Environment}"
+        # Các giá trị khác sẽ được cấu hình tùy thuộc vào provider WhatsApp
+        WHATSAPP_PROVIDER_PHONE_NUMBER: "REPLACE_WITH_YOUR_WHATSAPP_NUMBER"
+        # WHATSAPP_PROVIDER_SEND_API_URL có giá trị khác nhau tùy thuộc vào provider
+
+Resources:
+  # Lambda Function chính xử lý webhook từ WhatsApp provider
+  WhatsappWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-whatsappWebhook-${Environment}"
+      CodeUri: ./
+      Handler: index.handler
+      Description: Handler for WhatsApp webhook events
+      Environment:
+        Variables:
+          WHATSAPP_PROVIDER_SEND_API_URL: !If 
+            - IsTwilio
+            - "https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json"
+            - "REPLACE_WITH_YOUR_PROVIDER_API_URL"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationHistoryTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserStateTable
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*"
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'lambda:InvokeFunction'
+              Resource: !GetAtt GoogleCalendarFunction.Arn
+            - Effect: Allow
+              Action:
+                - 'bedrock:InvokeModel'
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - 'transcribe:StartTranscriptionJob'
+                - 'transcribe:GetTranscriptionJob'
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - 'polly:SynthesizeSpeech'
+              Resource: '*'
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /webhook
+            Method: post
+            RestApiId: !Ref WhatsappWebhookApi
+
+  # Lambda Function xử lý Google Calendar
+  GoogleCalendarFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-googleCalendar-${Environment}"
+      CodeUri: ./
+      Handler: googleCalendarLambda.handler
+      Description: Handler for Google Calendar operations
+      Policies:
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*"
+
+  # API Gateway cho webhook
+  WhatsappWebhookApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+
+  # DynamoDB Table để lưu lịch sử hội thoại
+  ConversationHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-ConversationHistory-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: phoneNumber
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: phoneNumber
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # DynamoDB Table để lưu state của người dùng
+  UserStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-UserState-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: phoneNumber
+          AttributeType: S
+      KeySchema:
+        - AttributeName: phoneNumber
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+# Conditions
+Conditions:
+  IsTwilio: !Equals [!Ref WhatsappProviderType, 'twilio']
+
+# Outputs
+Outputs:
+  WebhookUrl:
+    Description: URL of the WhatsApp webhook endpoint
+    Value: !Sub "https://${WhatsappWebhookApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/webhook"
+
+  WhatsappWebhookFunctionArn:
+    Description: ARN of the WhatsApp webhook Lambda function
+    Value: !GetAtt WhatsappWebhookFunction.Arn
+
+  GoogleCalendarFunctionArn:
+    Description: ARN of the Google Calendar Lambda function
+    Value: !GetAtt GoogleCalendarFunction.Arn
+
+  ConversationHistoryTableName:
+    Description: Name of the DynamoDB table for conversation history
+    Value: !Ref ConversationHistoryTable
+
+  UserStateTableName:
+    Description: Name of the DynamoDB table for user state
+    Value: !Ref UserStateTable 
