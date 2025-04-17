@@ -1,12 +1,18 @@
 // File: utils/whatsappSessionManager.js
-const AWS = require("aws-sdk"); // <<< Lưu ý: Đang dùng SDK v2
+const {
+  S3Client,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+} = require("@aws-sdk/client-s3");
 const fs = require("fs");
 const path = require("path");
 const logger = require("./logger"); // Đảm bảo file logger.js cũng tồn tại trong utils
 
-// Khởi tạo S3 client (sử dụng SDK v2)
-// Cần cấu hình region, ví dụ qua biến môi trường hoặc mặc định
-const s3 = new AWS.S3({ region: process.env.AWS_REGION || "us-east-1" });
+// Khởi tạo S3 client v3
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || "us-east-1",
+});
 const bucketName = process.env.WHATSAPP_SESSION_BUCKET; // Lấy tên bucket từ biến môi trường
 const sessionPath = process.env.WHATSAPP_SESSION_DATA_PATH || "./.wwebjs_auth"; // Đường dẫn cục bộ
 
@@ -57,16 +63,15 @@ async function saveSessionToS3() {
 
     for (const file of sessionFiles) {
       const fileContent = fs.readFileSync(file);
-      // Lấy đường dẫn tương đối để dùng làm Key trên S3
       const relativePath = path.relative(sessionPath, file).replace(/\\/g, "/"); // Đảm bảo dùng / cho S3 key
 
-      await s3
-        .putObject({
-          Bucket: bucketName,
-          Key: relativePath,
-          Body: fileContent,
-        })
-        .promise();
+      // Tạo và gửi command v3
+      const putCommand = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: relativePath,
+        Body: fileContent,
+      });
+      await s3Client.send(putCommand);
 
       logger.debug(`Uploaded ${relativePath} to S3`);
     }
@@ -98,13 +103,9 @@ async function loadSessionFromS3() {
       logger.info(`Created local session directory: ${sessionPath}`);
     }
 
-    // List các object trong bucket (hoặc prefix cụ thể nếu có)
-    const { Contents } = await s3
-      .listObjectsV2({
-        // Dùng listObjectsV2
-        Bucket: bucketName,
-      })
-      .promise();
+    // List các object trong bucket bằng command v3
+    const listCommand = new ListObjectsV2Command({ Bucket: bucketName });
+    const { Contents } = await s3Client.send(listCommand);
 
     if (!Contents || Contents.length === 0) {
       logger.warn(
@@ -118,12 +119,15 @@ async function loadSessionFromS3() {
       // Bỏ qua nếu là "thư mục" rỗng trên S3
       if (obj.Key.endsWith("/")) continue;
 
-      const fileData = await s3
-        .getObject({
-          Bucket: bucketName,
-          Key: obj.Key,
-        })
-        .promise();
+      // Tạo và gửi command v3
+      const getCommand = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: obj.Key,
+      });
+      const fileData = await s3Client.send(getCommand);
+
+      // Body trong v3 là một ReadableStream, cần đọc nó
+      const bodyContents = await streamToString(fileData.Body);
 
       const filePath = path.join(sessionPath, obj.Key);
       const dirPath = path.dirname(filePath);
@@ -133,7 +137,7 @@ async function loadSessionFromS3() {
         fs.mkdirSync(dirPath, { recursive: true });
       }
 
-      fs.writeFileSync(filePath, fileData.Body);
+      fs.writeFileSync(filePath, bodyContents); // Ghi nội dung đã đọc từ stream
       logger.debug(`Downloaded ${obj.Key} from S3 to ${filePath}`);
     }
 
@@ -150,6 +154,16 @@ async function loadSessionFromS3() {
     }
     return false; // Báo hiệu không tải được session
   }
+}
+
+// Helper function để đọc ReadableStream thành string (cần thêm vào cuối file hoặc import từ đâu đó)
+async function streamToString(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+  });
 }
 
 module.exports = {
