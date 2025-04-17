@@ -9,7 +9,7 @@ const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client
 // Other requires (keep relevant ones)
 // const { OpenAI } = require('openai'); // Remove if only using Bedrock
 const googleCalendar = require('./googleCalendar'); // Keep refactored service
-const crmService = require('./crmService'); // Keep, may need refactoring later
+const crmService = require('./backend/db/crmService'); // <<< SỬA ĐƯỜNG DẪN Ở ĐÂY
 const ragService = require('./ragService'); // Keep, may need refactoring later
 const textToSpeech = require('./textToSpeech'); // Keep, may need refactoring later
 const fs = require('fs'); // Keep for potential temp file handling (e.g., voice memos)
